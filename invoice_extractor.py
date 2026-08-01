@@ -38,7 +38,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+    HAVE_FITZ = True
+except ImportError:
+    HAVE_FITZ = False
 
 try:
     from rapidocr_onnxruntime import RapidOCR
@@ -1414,9 +1418,15 @@ def main(argv=None):
                     help="Only keep rows classified as Invoice in the main CSV")
     args = ap.parse_args(argv)
 
-    if not HAVE_RAPID:
-        print("ERROR: rapidocr-onnxruntime is not installed.\n"
-              "Install it with:  python -m pip install rapidocr-onnxruntime pymupdf",
+    if not HAVE_FITZ or not HAVE_RAPID:
+        print("ERROR: missing Python packages.\n"
+              "Install the dependencies from the project folder with:\n"
+              "\n"
+              "    python -m pip install -r requirements.txt\n"
+              "\n"
+              "or install them individually with:\n"
+              "\n"
+              "    python -m pip install pymupdf rapidocr-onnxruntime",
               file=sys.stderr)
         return 1
 
