@@ -85,6 +85,42 @@ The results (`invoices_extracted.csv`, `extraction_issues.csv`) are written to
 the folder you run it from, and OCR text per page is saved under `ocr_text/`.
 Everything is cached in `_cache/`, so re-running on the same files is instant.
 
+## First-time setup on a brand-new Windows machine
+
+The other machine needs **Git** and **Python** installed before anything else.
+
+### Option A – automatic (recommended)
+
+Download `setup_other_computer.ps1` from this repository (via the GitHub
+web page), open PowerShell in the download folder and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_other_computer.ps1
+```
+
+It installs Git and Python with winget, clones the project, and installs the
+dependencies. Optionally choose a destination folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_other_computer.ps1 -Dest D:\InvoiceScanner
+```
+
+### Option B – manual
+
+1. Install Git: download from https://git-scm.com/download/win and accept the
+   defaults.
+2. Install Python 3.10+: download from https://www.python.org/downloads/ and
+   **tick "Add python.exe to PATH"** before clicking Install.
+3. Open PowerShell and run:
+
+```powershell
+git clone https://github.com/SRiazRaza/PDF-Invoice-Scanner.git
+cd PDF-Invoice-Scanner
+python -m pip install -r requirements.txt
+```
+
+Then drop the PDFs into the folder and run the extractor as shown above.
+
 ## Output files
 
 * `invoices_extracted.csv` – one row per invoice/document with all six fields,
