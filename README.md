@@ -109,8 +109,11 @@ powershell -ExecutionPolicy Bypass -File .\setup_other_computer.ps1 -Dest D:\Inv
 
 1. Install Git: download from https://git-scm.com/download/win and accept the
    defaults.
-2. Install Python 3.10+: download from https://www.python.org/downloads/ and
+2. Install Python 3.12: download from https://www.python.org/downloads/ and
    **tick "Add python.exe to PATH"** before clicking Install.
+   > Important: the OCR engine only supports Python 3.10 – 3.12. If you
+   > installed Python 3.13 or 3.14, install 3.12 alongside it and use
+   > `py -3.12` in the commands below instead of `python`.
 3. Open PowerShell and run:
 
 ```powershell
