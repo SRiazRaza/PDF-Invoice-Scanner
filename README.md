@@ -55,12 +55,49 @@ Options:
 | `--dpi` | OCR resolution, `150`–`400` (default `300`; use `200` to run ~2× faster) |
 | `--only-invoices` | Keep only rows classified as invoices in the main CSV |
 | `--max-pages N` | Process only the first N pages (useful for testing) |
+| `--engine llm` | Use an LLM for field extraction (see below) |
 
 Example for a large batch run:
 
 ```powershell
 python invoice_extractor.py --input "D:\Project\PDF Invoice Scanner" --output invoices_extracted.csv --dpi 200
 ```
+
+## Handling totally different invoice layouts (`--engine llm`)
+
+The default `rules` engine matches labels such as "Invoice No." / "VAT" /
+"Grand Total" and works well on known layouts, but it will miss formats it has
+never seen. For batches of invoices from many different suppliers, use the LLM
+engine: the OCR text of each document is sent to an LLM, which returns the
+fields as strict JSON. No layout-specific rules are needed.
+
+Any OpenAI-compatible API works — OpenAI, Azure, or a local server (Ollama,
+LM Studio, vLLM, ...). No extra pip packages are required.
+
+```powershell
+# With an OpenAI API key
+$env:OPENAI_API_KEY = "sk-..."
+python invoice_extractor.py --input . --output invoices_extracted.csv --engine llm
+
+# Or with a local model (e.g. Ollama)
+$env:OPENAI_BASE_URL = "http://localhost:11434/v1"
+$env:OPENAI_MODEL = "llama3.1"          # or any model you have pulled
+python invoice_extractor.py --input . --output invoices_extracted.csv --engine llm
+```
+
+Settings (env var or CLI flag):
+
+| Setting | Env var | CLI flag |
+|---|---|---|
+| API key | `OPENAI_API_KEY` | `--llm-api-key` |
+| API base URL | `OPENAI_BASE_URL` | `--llm-base-url` |
+| Model | `OPENAI_MODEL` | `--llm-model` |
+
+If the LLM call fails (no key, no network, etc.) the script falls back to the
+rules engine and marks the row with `llm failed (...)`.
+
+> Privacy: `--engine llm` sends the OCR text of each invoice to the configured
+> API. For sensitive documents prefer a local model, or keep using `rules`.
 
 ## Clone and run on another computer
 

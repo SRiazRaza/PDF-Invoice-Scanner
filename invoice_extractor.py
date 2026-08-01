@@ -35,6 +35,8 @@ import json
 import os
 import re
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -1115,6 +1117,100 @@ def extract_transfer_info(tokens):
     return info
 
 
+LLM_SYSTEM_PROMPT = """You extract invoice fields from OCR text. \
+Return ONLY a JSON object with these exact keys:
+{
+  "date": "YYYY-MM-DD or null",
+  "supplier": "company that issued the document, or null",
+  "invoice_no": "invoice/receipt/statement/transfer reference, or null",
+  "net_amount_gbp": number or null,
+  "vat_amount_gbp": number or null,
+  "total_amount_gbp": number or null,
+  "currency": "GBP", "EUR", ... or null,
+  "notes": "one short sentence, or null"
+}
+Rules:
+- When a date is ambiguous (dd/mm/yyyy vs mm/dd/yyyy) use UK day-first format.
+- supplier is the company that ISSUED the invoice, never the customer.
+- Amounts are plain numbers without currency symbols (e.g. 130.74).
+- Use the values exactly as printed; never invent or estimate them.
+- If a document is a statement, receipt or bank transfer, still fill total
+  amount when one is shown, and use null for fields that do not apply.
+- If a field cannot be determined reliably, use null.
+- If amounts are in a currency other than GBP, keep the printed numbers and
+  set "currency" accordingly.
+"""
+
+
+def llm_extract_document(text, api_key, base_url, model, timeout=90):
+    """Call an OpenAI-compatible chat-completions endpoint with strict JSON."""
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": LLM_SYSTEM_PROMPT},
+            {"role": "user", "content": "OCR text of the document:\n\n" + text[:30000]},
+        ],
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    def post(use_format):
+        p = dict(payload)
+        if not use_format:
+            p.pop("response_format", None)
+        req = urllib.request.Request(
+            base_url.rstrip("/") + "/chat/completions",
+            data=json.dumps(p).encode("utf-8"),
+            headers=headers,
+            method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        data = post(True)
+    except urllib.error.HTTPError as e:
+        if e.code == 400:  # some local servers reject response_format
+            data = post(False)
+        else:
+            raise
+    content = data["choices"][0]["message"]["content"]
+    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+    return json.loads(content)
+
+
+def to_amount(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return round(float(value), 2)
+    s = str(value).strip().replace(",", "")
+    if not s:
+        return None
+    try:
+        return round(float(s), 2)
+    except ValueError:
+        return None
+
+
+def apply_llm_result(rec, result):
+    """Overwrite a record's fields with the LLM extraction result."""
+    rec.date = parse_date(str(result.get("date") or "")) or None
+    supplier = str(result.get("supplier") or "").strip()
+    rec.supplier = clean_supplier(supplier) or None
+    rec.inv_no = str(result.get("invoice_no") or "").strip() or None
+    rec.net = to_amount(result.get("net_amount_gbp"))
+    rec.vat = to_amount(result.get("vat_amount_gbp"))
+    rec.total = to_amount(result.get("total_amount_gbp"))
+    cur = str(result.get("currency") or "").strip().upper()
+    if cur:
+        rec.currency = cur
+    rec.flags.append("llm-extracted")
+    refine_amounts(rec)
+
+
 def refine_amounts(rec):
     """Cross-check Net + VAT == Total, repair OCR digit drops, derive missing."""
     net, vat, total = rec.net, rec.vat, rec.total
@@ -1416,6 +1512,16 @@ def main(argv=None):
     ap.add_argument("--max-pages", type=int, default=0, help="Process only the first N pages (debug)")
     ap.add_argument("--only-invoices", action="store_true",
                     help="Only keep rows classified as Invoice in the main CSV")
+    ap.add_argument("--engine", choices=["rules", "llm"], default="rules",
+                    help="Field extraction engine: 'rules' (default) or 'llm' "
+                         "(handles any invoice layout via an LLM)")
+    ap.add_argument("--llm-model", default=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
+                    help="LLM model (or set OPENAI_MODEL)")
+    ap.add_argument("--llm-base-url",
+                    default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                    help="OpenAI-compatible base URL (or set OPENAI_BASE_URL)")
+    ap.add_argument("--llm-api-key", default=os.environ.get("OPENAI_API_KEY", ""),
+                    help="API key (or set OPENAI_API_KEY)")
     args = ap.parse_args(argv)
 
     if not HAVE_FITZ or not HAVE_RAPID:
@@ -1446,6 +1552,12 @@ def main(argv=None):
     cache_dir.mkdir(exist_ok=True)
 
     print(f"Found {len(pdfs)} PDF file(s). OCR engine: RapidOCR")
+    if args.engine == "llm":
+        print(f"Field extraction engine: LLM ({args.llm_model}) via {args.llm_base_url}")
+        if not args.llm_api_key and "localhost" not in args.llm_base_url:
+            print("WARNING: no API key found (OPENAI_API_KEY). Falling back to rules.",
+                  file=sys.stderr)
+            args.engine = "rules"
     ocr = RapidOCR()
     all_records = []
     issues = []
@@ -1458,6 +1570,7 @@ def main(argv=None):
         if args.max_pages:
             n_pages = min(n_pages, args.max_pages)
         page_records = []
+        page_texts = {}
         for pno in range(n_pages):
             page_count += 1
             tokens, source = get_page_tokens(
@@ -1468,6 +1581,7 @@ def main(argv=None):
             scale = page_height_scale(page, args.dpi)
             page_h = page.rect.height * args.dpi / 72.0
             text_lower = " ".join(t.text for t in tokens).lower()
+            page_texts[pno + 1] = " ".join(t.text for t in tokens)
             doc_type = classify_document(text_lower)
             rec = extract_page(pdf_path.name, pno + 1, tokens, page_h, scale, doc_type)
             refine_amounts(rec)
@@ -1481,6 +1595,20 @@ def main(argv=None):
         grouped = dedupe_records(grouped)
         for rec in grouped:
             finalize_flags(rec)
+        if args.engine == "llm":
+            for rec in grouped:
+                doc_text = "\n\n--- page ---\n\n".join(
+                    page_texts[p] for p in sorted(rec.pages) if p in page_texts)
+                if not doc_text.strip():
+                    continue
+                try:
+                    result = llm_extract_document(
+                        doc_text, args.llm_api_key, args.llm_base_url, args.llm_model)
+                    apply_llm_result(rec, result)
+                    print(f"    llm: p{rec.pages} supplier={rec.supplier!r} "
+                          f"total={rec.total}")
+                except Exception as e:
+                    rec.flags.append(f"llm failed ({e.__class__.__name__}); used rules")
         all_records.extend(grouped)
 
     rows = [record_row(r) for r in all_records]
