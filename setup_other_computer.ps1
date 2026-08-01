@@ -22,8 +22,13 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
     Write-Host "[OK] Git is already installed." -ForegroundColor Green
 } else {
     Write-Host "Installing Git via winget ..."
-    winget install --id Git.Git -e --source winget `
-        --accept-package-agreements --accept-source-agreements
+    try {
+        winget install --id Git.Git -e --source winget `
+            --accept-package-agreements --accept-source-agreements
+    } catch {
+        Write-Host "winget failed to install Git. Install it manually from" -ForegroundColor Yellow
+        Write-Host "https://git-scm.com/download/win and run this script again." -ForegroundColor Yellow
+    }
 }
 
 # 2) Python -----------------------------------------------------------------
@@ -31,8 +36,14 @@ if (Get-Command python -ErrorAction SilentlyContinue) {
     Write-Host "[OK] Python is already installed." -ForegroundColor Green
 } else {
     Write-Host "Installing Python via winget ..."
-    winget install --id Python.Python.3.12 -e --source winget `
-        --accept-package-agreements --accept-source-agreements
+    try {
+        winget install --id Python.Python.3.12 -e --source winget `
+            --accept-package-agreements --accept-source-agreements
+    } catch {
+        Write-Host "winget failed to install Python. Install it manually from" -ForegroundColor Yellow
+        Write-Host "https://www.python.org/downloads/ (tick 'Add python.exe to PATH')" -ForegroundColor Yellow
+        Write-Host "and run this script again." -ForegroundColor Yellow
+    }
 }
 
 # Refresh PATH so tools installed just now are visible in this session.
@@ -40,13 +51,19 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";
             [System.Environment]::GetEnvironmentVariable("Path", "User")
 
 Write-Host ""
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Host "Git is not available. Install it from https://git-scm.com/download/win" -ForegroundColor Red
+    Write-Host "then open a new PowerShell window and run this script again."
+    exit 1
+}
+if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
+    Write-Host "Python is not available. Install it from https://www.python.org/downloads/" -ForegroundColor Red
+    Write-Host "(tick 'Add python.exe to PATH'), then open a NEW PowerShell window and run this script again."
+    exit 1
+}
 Write-Host "Installed versions:" -ForegroundColor Yellow
 git --version
-if (Get-Command python -ErrorAction SilentlyContinue) {
-    python --version
-} else {
-    py -3 --version
-}
+if (Get-Command python -ErrorAction SilentlyContinue) { python --version } else { py -3 --version }
 
 # 3) Clone the project -------------------------------------------------------
 if (-not $Dest) {
