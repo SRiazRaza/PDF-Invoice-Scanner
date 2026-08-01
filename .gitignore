@@ -1,0 +1,16 @@
+# Sensitive source documents (invoices contain personal/financial data)
+*.pdf
+
+# Generated output (contains extracted invoice data)
+invoices_extracted.csv
+extraction_issues.csv
+ocr_text/
+
+# OCR cache (regenerable on each machine)
+_cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
